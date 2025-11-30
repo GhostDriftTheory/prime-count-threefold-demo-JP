@@ -63,17 +63,17 @@
       // [Module] 1. OS Core: Prime Ledger (Finite Database)
       // ==========================================
       const PRIME_PI_LEDGER = Object.freeze([
-        { N: 9999, pi: 1229 },
-        { N: 10500, pi: 1282 },
-        { N: 49999, pi: 5133 },
-        { N: 50500, pi: 5186 },
-        { N: 99999, pi: 9592 },
-        { N: 100800, pi: 9666 },
-        { N: 10000, pi: 1229 },
-        { N: 20000, pi: 2262 },
-        { N: 30000, pi: 3245 },
-        { N: 40000, pi: 4203 },
-        { N: 50000, pi: 5133 },
+        { N:  9999,  pi: 1229 },
+        { N: 10500,  pi: 1284 },
+        { N: 49999,  pi: 5133 },
+        { N: 50500,  pi: 5179 },
+        { N: 99999,  pi: 9592 },
+        { N: 100800, pi: 9657 },
+        { N: 10000,  pi: 1229 },
+        { N: 20000,  pi: 2262 },
+        { N: 30000,  pi: 3245 },
+        { N: 40000,  pi: 4203 },
+        { N: 50000,  pi: 5133 },
       ]);
 
       const PRIME_PI_INDEX = (() => {
@@ -212,7 +212,7 @@
           chamberId: null,
           bruteCount: null,
           progress: 0,
-          mode: "idle", 
+          mode: "idle", // idle | os_geom_ready | os_geom_only | counting | done
           errorMessage: null,
           safetyLevel: "safe",
           range: null,
@@ -269,10 +269,12 @@
           step();
         }, []);
 
+        // --- Run Handler (Updated for Flexible Range) ---
         const handleRun = useCallback(() => {
           const A = parseInt(startInput, 10);
           const B = parseInt(endInput, 10);
 
+          // 1. 基本入力チェック
           if (Number.isNaN(A) || Number.isNaN(B)) {
             setSession({ ...initialSession, errorMessage: "整数を入力してください。" });
             return;
@@ -281,18 +283,19 @@
             setSession({ ...initialSession, errorMessage: "A ≥ 2 かつ B > A を満たす必要があります。" });
             return;
           }
-          if (B - A > MAX_WIDTH) {
-            setSession({ ...initialSession, errorMessage: `区間幅は ${MAX_WIDTH} 以下に制限されています。` });
-            return;
-          }
+          // 上限だけはハード制限（OS/幾何もここまでは保証という建前）
           if (B > MAX_END) {
              setSession({ ...initialSession, errorMessage: `Bは ${MAX_END} 以下に制限されています。` });
             return;
           }
 
+          // 2. OS / 幾何は必ず動かす（Graceful Degradation）
           const osResult = runOsPrediction(A, B);
           const chamber = assignChamber(A, B);
           const safety = classifySafety(osResult);
+
+          const width = B - A;
+          const enableBrute = width <= MAX_WIDTH; // 幅が小さいときだけ実測
 
           setSession({
             ...initialSession,
@@ -306,14 +309,21 @@
             chamberId: chamber.cellId,
             
             bruteCount: null,
-            mode: "os_geom_ready",
-            errorMessage: null,
+            // 実測が有効なら準備完了、無効なら「OSのみ完了」ステータス
+            mode: enableBrute ? "os_geom_ready" : "os_geom_only", 
+            // 実測スキップ時はメッセージを表示
+            errorMessage: enableBrute 
+              ? null 
+              : `区間幅が広いため、実測カウンタは自動オフになります (Limit: ${MAX_WIDTH})`,
             safetyLevel: safety.level,
             range: { A, B },
             progress: 0,
           });
 
-          startBruteForce(A, B);
+          // 3. 実測カウンタは安全な幅のときだけ起動
+          if (enableBrute) {
+            startBruteForce(A, B);
+          }
         }, [startInput, endInput, startBruteForce]);
 
         const handleReset = () => {
@@ -335,9 +345,16 @@
           }
         }
         
+        // Active states & Badges
         const osActive = isTripleMatch ? "border-teal-700 ring-2 ring-teal-700 shadow-md" : "border-gray-200";
         const geomActive = isTripleMatch ? "border-slate-600 ring-2 ring-slate-600 shadow-md" : "border-gray-200";
         const bruteActive = isTripleMatch ? "border-red-800 ring-2 ring-red-800 shadow-md" : "border-gray-200";
+
+        // Badge Style based on safetyLevel
+        const badgeStyle = session.safetyLevel === 'safe' 
+          ? "bg-teal-100 text-teal-800 border-teal-200" 
+          : "bg-amber-100 text-amber-800 border-amber-200";
+        const badgeText = session.safetyLevel === 'safe' ? "Safe / Proven" : "Border / Estimated";
 
         const presets = [
           { label: "区間 A (1万〜)", A: 10000, B: 10500 },
@@ -364,7 +381,7 @@
                   </p>
                 </div>
                 <div className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-1 rounded self-start md:self-center">
-                   v1.6 GhostDrift
+                   v1.8 GhostDrift
                 </div>
               </div>
             </header>
@@ -382,26 +399,29 @@
                     このデモは、explicit formula に基づく<strong>「素数個数の有限台帳 (Finite Prime-Count Ledger)」</strong>と、
                     {"$(A,B)$-平面上の"} <strong>Hyperplane Arrangement 型の Chamber 構造</strong>を組み合わせたトイモデルです。
                   </p>
-                  <p className="text-xs leading-relaxed text-slate-600">
+                  <p className="text-xs leading-relaxed text-slate-600 mb-2">
                     {"区間 $[A,B]$ の素数個数 $\\pi(A,B)$ が、有限個のセル (Chamber) と有限台帳によっていかに分類・決定されるかを、"}
                     <strong>OS (Theory) / 幾何 (Geometry) / 実測 (Counter)</strong> の三視点から可視化します。
                   </p>
+                  
+                  {/* Ledger Note */}
+                  <div className="text-[10px] text-slate-500 bg-slate-50 px-3 py-2 rounded border border-slate-100 mt-2">
+                    ※ 本デモで使用している <code>{"PRIME_PI_LEDGER"}</code> はデモ用に前計算した有限表であり、本番の ADIC / $\Sigma_1$ 証明書の完全版ではありません。
+                  </div>
                 </div>
 
-                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 space-y-3">
-                  <div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
                     <h3 className="text-xs font-bold text-teal-800 mb-1">■ 有限台帳と Chamber 分類</h3>
-                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                    <p className="text-[10px] text-slate-600 leading-relaxed">
                       {"超トーリック多様体の普遍ボアソン変形において、$H^2(Y,\\mathbb{C})/W$ 上の Hyperplane Arrangement の Chamber ごとに"}
                       シンプレクティック特異点解消や幾何構造がクラス分けされる構図のアナロジーです。
-                      本デモでは、パラメータ空間を Chamber で分割し、各領域での素数個数の振る舞いを分類します。
                     </p>
                   </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-red-800 mb-1">■ OS (Ledger) vs 実測の二重構造</h3>
-                    <p className="text-[11px] text-slate-600 leading-relaxed">
-                      OSは <code>{"PRIME_PI_LEDGER"}</code> (有限台帳) と近似モデルのみを参照し、画面下の素朴カウンタは独立に <code>{"isPrime"}</code> で実測を行います。
-                      Ledger 外の領域では「近似＋誤差帯」と実測値の整合性を検証する二重チェック構造となっています。
+                  <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                    <h3 className="text-xs font-bold text-red-800 mb-1">■ OS (Ledger) vs 実測</h3>
+                    <p className="text-[10px] text-slate-600 leading-relaxed">
+                      OSは <code>{"PRIME_PI_LEDGER"}</code> と近似モデルのみを参照し、カウンタは独立に <code>{"isPrime"}</code> で実測を行います。Ledger内外で「完全一致」か「推計範囲内か」の検証レベルが変わります。
                     </p>
                   </div>
                 </div>
@@ -475,7 +495,7 @@
                 </div>
                 
                 {session.errorMessage && (
-                  <div className="mt-4 p-3 bg-red-50 border-l-4 border-red-600 text-red-800 text-xs font-medium rounded-r">
+                  <div className="mt-4 p-3 bg-amber-50 border-l-4 border-amber-500 text-amber-900 text-xs font-medium rounded-r">
                      {session.errorMessage}
                   </div>
                 )}
@@ -487,7 +507,13 @@
                 {/* 1. Theoretical (OS) */}
                 <div className={`academic-card rounded-xl p-5 ${osActive}`}>
                   <div className="flex items-center justify-between mb-3 border-b border-gray-100 pb-2">
-                    <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-1 rounded">I. 理論値 (OS)</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-1 rounded">I. 理論値 (OS)</span>
+                      {/* Safety Badge */}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded border font-semibold tracking-tight ${badgeStyle}`}>
+                        {badgeText}
+                      </span>
+                    </div>
                     <span className="text-[10px] text-slate-400">Ledger & Approx</span>
                   </div>
                   
@@ -507,7 +533,7 @@
                      
                      <div className="mt-2 pt-2 border-t border-dashed border-gray-200 text-right">
                        <div className="text-[10px] text-slate-400 font-mono">
-                         {session.osApprox ? `理論推計: ${session.osApprox.toLocaleString()} ± ${(session.osUpper - session.osApprox)}` : "—"}
+                         {session.osApprox != null ? `理論推計: ${session.osApprox.toLocaleString()} ± ${(session.osUpper - session.osApprox)}` : "—"}
                        </div>
                        {session.osLower != null && (
                          <div className="text-[10px] text-teal-600 font-medium">
@@ -562,7 +588,7 @@
                     </div>
                   </div>
                   
-                  {session.osInLedger && (
+                  {session.osInLedger && session.osExact != null && (
                      <div className="mt-3 text-right animate-fade-in">
                         <div className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-0.5">Geometric N</div>
                         <div className="text-2xl font-mono font-medium text-slate-700">
@@ -579,28 +605,38 @@
                     <span className="text-[10px] text-slate-400">Direct Count</span>
                   </div>
                   
-                  <div className="mb-4">
-                     <div className="flex justify-between items-end mb-1">
-                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Actual Count</div>
-                        <div className="text-3xl font-mono font-medium text-red-900 leading-none">
-                          {session.bruteCount != null ? session.bruteCount.toLocaleString() : "—"}
+                  {/* Counter Display with Skip State Handling */}
+                  {session.mode === 'os_geom_only' ? (
+                    <div className="flex flex-col items-center justify-center py-6 text-slate-400">
+                      <div className="text-sm font-bold text-slate-300 mb-1">実測スキップ</div>
+                      <div className="text-[10px]">Skipped (Limit Exceeded)</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mb-4">
+                         <div className="flex justify-between items-end mb-1">
+                            <div className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Actual Count</div>
+                            <div className="text-3xl font-mono font-medium text-red-900 leading-none">
+                              {session.bruteCount != null ? session.bruteCount.toLocaleString() : "—"}
+                            </div>
+                         </div>
+                      </div>
+                      
+                      {/* Progress Bar */}
+                      <div>
+                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                          <span>進捗 {progressPercent}%</span>
+                          {session.mode === 'done' && <span className="text-red-700 font-bold">完了</span>}
                         </div>
-                     </div>
-                  </div>
-                  
-                  {/* Progress Bar */}
-                  <div>
-                    <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                      <span>進捗 {progressPercent}%</span>
-                      {session.mode === 'done' && <span className="text-red-700 font-bold">完了</span>}
-                    </div>
-                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-slate-800 transition-all duration-300 ease-out" 
-                        style={{ width: `${progressPercent}%` }}
-                      />
-                    </div>
-                  </div>
+                        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-slate-800 transition-all duration-300 ease-out" 
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
               </section>
