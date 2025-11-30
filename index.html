@@ -63,17 +63,17 @@
       // [Module] 1. OS Core: Prime Ledger (Finite Database)
       // ==========================================
       const PRIME_PI_LEDGER = Object.freeze([
-        { N:  9999,  pi: 1229 },
-        { N: 10500,  pi: 1284 },
-        { N: 49999,  pi: 5133 },
-        { N: 50500,  pi: 5179 },
-        { N: 99999,  pi: 9592 },
-        { N: 100800, pi: 9657 },
-        { N: 10000,  pi: 1229 },
-        { N: 20000,  pi: 2262 },
-        { N: 30000,  pi: 3245 },
-        { N: 40000,  pi: 4203 },
-        { N: 50000,  pi: 5133 },
+        { N:  9999,  pi: 1229 },  // π(9999)
+        { N: 10500,  pi: 1284 },  // π(10500)
+        { N: 49999,  pi: 5133 },  // π(49999)
+        { N: 50500,  pi: 5179 },  // π(50500)
+        { N: 99999,  pi: 9592 },  // π(99999)
+        { N: 100800, pi: 9657 },  // π(100800)
+        { N: 10000,  pi: 1229 },  // π(10000)
+        { N: 20000,  pi: 2262 },  // π(20000)
+        { N: 30000,  pi: 3245 },  // π(30000)
+        { N: 40000,  pi: 4203 },  // π(40000)
+        { N: 50000,  pi: 5133 },  // π(50000)
       ]);
 
       const PRIME_PI_INDEX = (() => {
@@ -146,8 +146,11 @@
         const approxCount = Math.max(0, Math.round(approxB - approxA));
 
         const width = b - a;
-        const baseError = Math.sqrt(approxCount || 1) * 1.5; 
-        const margin = Math.ceil(baseError + (width * 0.005));
+        
+        // ★ 誤差設計の修正（太らせる）
+        // 旧: sqrt * 1.5 + width * 0.005 -> 新: sqrt * 2.0 + width * 0.02 + 10
+        const baseError = Math.sqrt(approxCount || 1) * 2.0; 
+        const margin = Math.ceil(baseError + (width * 0.02) + 10);
 
         return {
           inLedger: inLedger,
@@ -199,7 +202,7 @@
       // [Component] Main App
       // ==========================================
       function App() {
-        const MAX_WIDTH = 50000;
+        const MAX_WIDTH_FOR_BRUTE = 50000;
         const MAX_END = 2000000;
 
         const initialSession = {
@@ -269,12 +272,10 @@
           step();
         }, []);
 
-        // --- Run Handler (Updated for Flexible Range) ---
         const handleRun = useCallback(() => {
           const A = parseInt(startInput, 10);
           const B = parseInt(endInput, 10);
 
-          // 1. 基本入力チェック
           if (Number.isNaN(A) || Number.isNaN(B)) {
             setSession({ ...initialSession, errorMessage: "整数を入力してください。" });
             return;
@@ -283,19 +284,16 @@
             setSession({ ...initialSession, errorMessage: "A ≥ 2 かつ B > A を満たす必要があります。" });
             return;
           }
-          // 上限だけはハード制限（OS/幾何もここまでは保証という建前）
           if (B > MAX_END) {
-             setSession({ ...initialSession, errorMessage: `Bは ${MAX_END} 以下に制限されています。` });
+             setSession({ ...initialSession, errorMessage: `Bは ${MAX_END.toLocaleString()} 以下に制限されています。` });
             return;
           }
 
-          // 2. OS / 幾何は必ず動かす（Graceful Degradation）
+          const width = B - A;
           const osResult = runOsPrediction(A, B);
           const chamber = assignChamber(A, B);
           const safety = classifySafety(osResult);
-
-          const width = B - A;
-          const enableBrute = width <= MAX_WIDTH; // 幅が小さいときだけ実測
+          const enableBrute = (width <= MAX_WIDTH_FOR_BRUTE);
 
           setSession({
             ...initialSession,
@@ -309,18 +307,15 @@
             chamberId: chamber.cellId,
             
             bruteCount: null,
-            // 実測が有効なら準備完了、無効なら「OSのみ完了」ステータス
             mode: enableBrute ? "os_geom_ready" : "os_geom_only", 
-            // 実測スキップ時はメッセージを表示
             errorMessage: enableBrute 
               ? null 
-              : `区間幅が広いため、実測カウンタは自動オフになります (Limit: ${MAX_WIDTH})`,
+              : `区間幅が ${MAX_WIDTH_FOR_BRUTE.toLocaleString()} を超えているため、この区間では OS / 幾何のみ表示し、実測カウンタは自動オフとしています。`,
             safetyLevel: safety.level,
             range: { A, B },
             progress: 0,
           });
 
-          // 3. 実測カウンタは安全な幅のときだけ起動
           if (enableBrute) {
             startBruteForce(A, B);
           }
@@ -335,12 +330,14 @@
 
         const hasRange = !!session.range;
         const progressPercent = Math.round((session.progress || 0) * 100);
+        const rangeWidth = session.range ? session.range.B - session.range.A : null;
         
         let isTripleMatch = false;
         if (session.mode === 'done' && session.bruteCount !== null) {
           if (session.osInLedger) {
             isTripleMatch = (session.osExact === session.bruteCount);
           } else {
+            // Ledger外なら「帯の中」に入っていればOK
             isTripleMatch = (session.bruteCount >= session.osLower && session.bruteCount <= session.osUpper);
           }
         }
@@ -350,7 +347,6 @@
         const geomActive = isTripleMatch ? "border-slate-600 ring-2 ring-slate-600 shadow-md" : "border-gray-200";
         const bruteActive = isTripleMatch ? "border-red-800 ring-2 ring-red-800 shadow-md" : "border-gray-200";
 
-        // Badge Style based on safetyLevel
         const badgeStyle = session.safetyLevel === 'safe' 
           ? "bg-teal-100 text-teal-800 border-teal-200" 
           : "bg-amber-100 text-amber-800 border-amber-200";
@@ -367,6 +363,9 @@
           setEndInput(String(p.B));
         };
 
+        // Determine main OS value: Exact if in ledger, Approx if not.
+        const mainOsValue = session.osInLedger ? session.osExact : session.osApprox;
+
         return (
           <div className="min-h-screen pb-24 bg-slate-50">
             {/* Header */}
@@ -381,7 +380,7 @@
                   </p>
                 </div>
                 <div className="text-[10px] text-slate-400 font-medium bg-slate-100 px-2 py-1 rounded self-start md:self-center">
-                   v1.8 GhostDrift
+                   v1.12 GhostDrift
                 </div>
               </div>
             </header>
@@ -450,6 +449,10 @@
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                     任意の区間指定 <span className="math-font text-slate-600">{"[A, B]"}</span>
                   </label>
+                  <p className="text-[10px] text-slate-400 mb-2 leading-snug">
+                    制約: A ≥ 2, B &gt; A, <span className="font-semibold text-slate-500">B ≤ {MAX_END.toLocaleString()}</span>。<br/>
+                    区間幅 $(B-A) \le {MAX_WIDTH_FOR_BRUTE.toLocaleString()}$ のときのみ実測カウンタが稼働します（それより広い場合はOS/幾何のみ表示）。
+                  </p>
                   <div className="flex gap-3 items-center">
                     <input
                       type="number"
@@ -501,6 +504,26 @@
                 )}
               </section>
 
+              {/* Status Bar */}
+              {hasRange && (
+                <section className="mb-6 animate-fade-in">
+                  <div className="bg-slate-100 border border-slate-200 rounded-lg px-4 py-2 flex flex-wrap justify-between items-center gap-2">
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Current Range</span>
+                      <span className="font-mono bg-white px-2 py-0.5 rounded border border-slate-200">
+                        [{session.range.A.toLocaleString()}, {session.range.B.toLocaleString()}]
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Width</span>
+                      <span className="font-mono bg-white px-2 py-0.5 rounded border border-slate-200">
+                        {rangeWidth.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               {/* Cards Grid */}
               <section className="space-y-4 mb-8">
                 
@@ -523,25 +546,34 @@
                            {session.osInLedger ? (
                              <span>証明台帳値<br/><span className="text-[10px] text-slate-400">(Finite Ledger)</span></span>
                            ) : (
-                             <span>台帳外<br/><span className="text-[10px] text-slate-400">(Not in Ledger)</span></span>
+                             <span>推計値<br/><span className="text-[10px] text-slate-400">(Estimated)</span></span>
                            )}
                         </div>
-                        <div className={`text-2xl font-mono font-medium ${session.osInLedger ? 'text-teal-800' : 'text-slate-400'}`}>
-                           {session.osExact != null ? session.osExact.toLocaleString() : "—"}
+                        {/* メイン数値表示：台帳内ならExact、外ならApprox、nullチェックで0も表示 */}
+                        <div className={`text-2xl font-mono font-medium ${session.osInLedger ? 'text-teal-800' : 'text-slate-700'}`}>
+                           {mainOsValue != null ? mainOsValue.toLocaleString() : "—"}
                         </div>
                      </div>
                      
                      <div className="mt-2 pt-2 border-t border-dashed border-gray-200 text-right">
                        <div className="text-[10px] text-slate-400 font-mono">
-                         {session.osApprox != null ? `理論推計: ${session.osApprox.toLocaleString()} ± ${(session.osUpper - session.osApprox)}` : "—"}
+                         {/* osApprox might be 0, so check strict nullity */}
+                         {session.osApprox != null ? `理論推計: ${session.osApprox.toLocaleString()} ± ${(session.osUpper - session.osApprox).toLocaleString()}` : "—"}
                        </div>
-                       {session.osLower != null && (
+                       {session.osLower != null && session.osUpper != null && (
                          <div className="text-[10px] text-teal-600 font-medium">
                             安全帯: [{session.osLower.toLocaleString()} - {session.osUpper.toLocaleString()}]
                          </div>
                        )}
                      </div>
                   </div>
+
+                  {/* 推計モード時の注釈 */}
+                  {!session.osInLedger && hasRange && (
+                    <div className="mt-3 pt-2 border-t border-slate-100 text-[10px] text-slate-400 leading-snug">
+                      ※ この区間は Ledger 外のため、OS は<span className="text-amber-600 font-medium">「推計値＋安全帯」</span>のみを提示します（完全な証明値ではありません）。
+                    </div>
+                  )}
                   
                   {hasRange && isTripleMatch && (
                       <div className="mt-3 text-[11px] text-teal-700 bg-teal-50/50 p-2 rounded flex items-center gap-2 animate-fade-in">
@@ -601,15 +633,25 @@
                 {/* 3. Empirical (Counter) */}
                 <div className={`academic-card rounded-xl p-5 ${bruteActive}`}>
                   <div className="flex items-center justify-between mb-3 border-b border-gray-100 pb-2">
-                    <span className="text-xs font-bold text-red-800 bg-red-50 px-2 py-1 rounded">III. 実測値</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-red-800 bg-red-50 px-2 py-1 rounded">III. 実測値</span>
+                      {session.mode === 'os_geom_only' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-200">
+                          Auto-Off
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-slate-400">Direct Count</span>
                   </div>
                   
                   {/* Counter Display with Skip State Handling */}
                   {session.mode === 'os_geom_only' ? (
-                    <div className="flex flex-col items-center justify-center py-6 text-slate-400">
-                      <div className="text-sm font-bold text-slate-300 mb-1">実測スキップ</div>
-                      <div className="text-[10px]">Skipped (Limit Exceeded)</div>
+                    <div className="flex flex-col items-center justify-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-slate-50">
+                      <span className="text-lg">⏸</span>
+                      <div className="text-[10px] mt-1 font-medium text-slate-500">
+                        区間幅 (B−A) = <span className="font-mono">{rangeWidth?.toLocaleString()}</span> が<br/>
+                        上限 <span className="font-mono">{MAX_WIDTH_FOR_BRUTE.toLocaleString()}</span> を超えているためスキップ
+                      </div>
                     </div>
                   ) : (
                     <>
